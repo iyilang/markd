@@ -1,4 +1,0 @@
-module markd/seed_test
-
-# Temporary negative control for the CI test gate.
-assert false, "seeded CI gate failure"
