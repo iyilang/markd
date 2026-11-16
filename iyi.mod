@@ -1,1 +1,1 @@
-module github.com/iyilang/markd
+module github.com/jwaldrip/markd

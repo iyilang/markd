@@ -2,6 +2,7 @@
 
 Source: https://github.com/icyleaf/markd, tag v0.5.0, commit
 `d61dd52d40e659b53cb78712a7b1190cfdb9bc66`.
+The iyi module identity is `github.com/jwaldrip/markd`.
 
 ## Differences
 

@@ -14,7 +14,7 @@ differences.
 
 ## Usage
 
-After release, add the package with `iyi get github.com/iyilang/markd --as markd`.
+After release, add the package with `iyi get github.com/jwaldrip/markd --as markd`.
 
 ```iyi
 import markd
