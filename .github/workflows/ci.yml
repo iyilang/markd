@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      IYI_VERSION: 0.21.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install iyi
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/iyilang/iyi/v${IYI_VERSION}/install.sh" | IYI_PREFIX="$HOME/.iyi" IYI_VERSION="$IYI_VERSION" sh
+          echo "$HOME/.iyi/bin" >> "$GITHUB_PATH"
+
+      - run: iyi version
+
+      - name: Test
+        run: iyi test .
+
+      - name: Build every module
+        run: |
+          iyi build markd.iyi -o "$RUNNER_TEMP/markd-module"
+          for module in $(find markd -name '*.iyi' ! -name '*_test.iyi' -type f); do
+            iyi build "$module" -o "$RUNNER_TEMP/markd-module"
+          done
+
+      - name: Test from artifacts
+        run: |
+          for test in markd/*_test.iyi; do
+            mods="$RUNNER_TEMP/mods/$(basename "$test" .iyi)"
+            mkdir -p "$mods"
+            iyi build --emit-iyimod "$mods" "$test" -o "$RUNNER_TEMP/emitted"
+            iyi build --use-iyimod "$mods" "$test" -o "$RUNNER_TEMP/reused"
+            "$RUNNER_TEMP/reused"
+          done
+
+      - name: Check formatting
+        run: iyi fmt --check markd.iyi markd
+
+      - name: Vet
+        run: iyi vet markd.iyi

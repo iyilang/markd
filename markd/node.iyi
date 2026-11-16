@@ -1,0 +1,280 @@
+module markd/node
+
+import std/io
+
+pub class Node
+  # Node Type
+  enum Type
+    Document
+    Paragraph
+    Text
+    Strong
+    Emphasis
+    Link
+    Image
+    Heading
+    List
+    Item
+    BlockQuote
+    ThematicBreak
+    Code
+    CodeBlock
+    HTMLBlock
+    HTMLInline
+    LineBreak
+    SoftBreak
+
+    CustomInLine
+    CustomBlock
+
+    def container? : Bool
+      case self
+      when Document, Paragraph, Strong, Emphasis, Link, Image, Heading, List, Item, BlockQuote, CustomInLine, CustomBlock
+        true
+      else
+        false
+      end
+    end
+  end
+
+  CONTAINER_TYPES = {
+    Type::Document,
+    Type::Paragraph,
+    Type::Strong,
+    Type::Emphasis,
+    Type::Link,
+    Type::Image,
+    Type::Heading,
+    Type::List,
+    Type::Item,
+    Type::BlockQuote,
+    Type::CustomInLine,
+    Type::CustomBlock,
+  }
+
+  alias DataValue = String | Int32 | Bool
+  alias DataType = Hash(String, DataValue)
+
+  property type : Type
+
+  property data : DataType
+  property source_pos : Tuple(Tuple(Int32, Int32), Tuple(Int32, Int32))
+  property text : String
+  property open : Bool
+  property fenced : Bool
+  property fence_language : String
+  property fence_char : String
+  property fence_length : Int32
+  property fence_offset : Int32
+  property last_line_blank : Bool
+  property last_line_checked : Bool
+
+  @parent : Node?
+  @first_child : Node?
+  @last_child : Node?
+  @prev : Node?
+  @next : Node?
+
+  def open? : Bool
+    @open
+  end
+
+  def fenced? : Bool
+    @fenced
+  end
+
+  def last_line_blank? : Bool
+    @last_line_blank
+  end
+
+  def last_line_checked? : Bool
+    @last_line_checked
+  end
+
+  def parent : Node
+    @parent || raise "parent is not set"
+  end
+
+  def parent? : Node?
+    @parent
+  end
+
+  def parent=(value : Node?) : Node?
+    @parent = value
+  end
+
+  def first_child : Node
+    @first_child || raise "first_child is not set"
+  end
+
+  def first_child? : Node?
+    @first_child
+  end
+
+  def first_child=(value : Node?) : Node?
+    @first_child = value
+  end
+
+  def last_child : Node
+    @last_child || raise "last_child is not set"
+  end
+
+  def last_child? : Node?
+    @last_child
+  end
+
+  def last_child=(value : Node?) : Node?
+    @last_child = value
+  end
+
+  def prev : Node
+    @prev || raise "prev is not set"
+  end
+
+  def prev? : Node?
+    @prev
+  end
+
+  def prev=(value : Node?) : Node?
+    @prev = value
+  end
+
+  def next : Node
+    @next || raise "next is not set"
+  end
+
+  def next? : Node?
+    @next
+  end
+
+  def next=(value : Node?) : Node?
+    @next = value
+  end
+
+  def initialize(@type : Type)
+    @data = {} of String => DataValue
+    @source_pos = { {1, 1}, {0, 0} }
+    @text = ""
+    @open = true
+    @fenced = false
+    @fence_language = ""
+    @fence_char = ""
+    @fence_length = 0
+    @fence_offset = 0
+    @last_line_blank = false
+    @last_line_checked = false
+    @parent = nil
+    @first_child = nil
+    @last_child = nil
+    @prev = nil
+    @next = nil
+  end
+
+  def append_child(child : Node) : Nil
+    child.unlink
+    child.parent = self
+
+    if last = last_child?
+      last.next = child
+      child.prev = last
+      @last_child = child
+    else
+      @first_child = child
+      @last_child = child
+    end
+    nil
+  end
+
+  def insert_after(sibling : Node) : Nil
+    sibling.unlink
+
+    if nxt = next?
+      nxt.prev = sibling
+    elsif parent = parent?
+      parent.last_child = sibling
+    end
+    sibling.next = nxt
+
+    sibling.prev = self
+    @next = sibling
+    sibling.parent = parent?
+    nil
+  end
+
+  def unlink : Nil
+    if prev = prev?
+      prev.next = next?
+    elsif parent = parent?
+      parent.first_child = next?
+    end
+
+    if nxt = next?
+      nxt.prev = prev?
+    elsif parent = parent?
+      parent.last_child = prev?
+    end
+
+    @parent = nil
+    @next = nil
+    @prev = nil
+    nil
+  end
+
+  def walker : Walker
+    Walker.new(self)
+  end
+
+  def to_s(io : IO) : Nil
+    io << "#<" << {{@type.name.id.stringify}} << ":0x"
+    io << object_id.to_s(16)
+    io << " @type=" << @type
+    io << " @parent=" << @parent if @parent
+    io << " @next=" << @next if @next
+
+    data = @data
+    io << " @data=" << data if data && !data.empty?
+
+    io << ">"
+    nil
+  end
+
+  class Walker
+    @current : Node?
+    def initialize(@root : Node)
+      @current = @root
+      @entering = true
+    end
+
+    def next : Tuple(Node, Bool)?
+      current = @current
+      return unless current
+
+      entering = @entering
+
+      if entering && current.type.container?
+        if first_child = current.first_child?
+          @current = first_child
+          @entering = true
+        else
+          @entering = false
+        end
+      elsif current == @root
+        @current = nil
+      elsif nxt = current.next?
+        @current = current.next?
+        @entering = true
+      else
+        @current = current.parent?
+        @entering = false
+      end
+
+      return current, entering
+    end
+
+    def resume_at(node : Node, entering : Bool) : Nil
+      @current = node
+      @entering = entering
+      nil
+    end
+  end
+end

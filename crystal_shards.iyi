@@ -1,0 +1,9 @@
+# The shards this tree was written against, required once and
+# imported by every module: III.5 initialises an import before
+# its importer, so a shard's top-level code — `pg` registering
+# its driver — runs before anything that uses it.
+module crystal_shards
+
+require "uri"
+require "html"
+require "json"

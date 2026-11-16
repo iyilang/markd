@@ -1,0 +1,23 @@
+module markd
+
+require "uri"
+require "html"
+require "json"
+import crystal_shards
+
+import markd/block_inline_parser
+import markd/h_t_m_l_entities
+import markd/html_renderer_renderer::{HTMLRenderer}
+import markd/node
+import markd/options
+import markd/rule_and_others
+import markd/utils
+import markd/version
+
+def to_html(source : String, options = Markd::Options::Options.new)
+  return "" if source.empty?
+
+  document = Markd::BlockInlineParser.parse(source, options)
+  renderer = HTMLRenderer.new(options)
+  renderer.render(document)
+end
