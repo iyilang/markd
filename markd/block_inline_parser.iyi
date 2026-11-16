@@ -1,0 +1,966 @@
+module markd/block_inline_parser
+
+import std/text
+import std/regex::{Regex}
+
+import markd/node::{Node}
+import markd/inline_parser::{Inline}
+import markd/patterns::*
+import markd/options::{Options}
+import markd/utils
+
+alias Parser = Block
+
+# ── markd/parser.cr ──
+
+pub def parse(source : String, options : Options = Options.new) : Node
+  Block.parse(source, options)
+end
+
+# ── markd/parsers/block.cr ──
+
+pub class Block
+  def self.parse(source : String, options : Options = Options.new) : Node
+    new(options).parse(source)
+  end
+
+  RULES = {
+    Node::Type::Document      => Document.new,
+    Node::Type::BlockQuote    => BlockQuote.new,
+    Node::Type::Heading       => Heading.new,
+    Node::Type::CodeBlock     => CodeBlock.new,
+    Node::Type::HTMLBlock     => HTMLBlock.new,
+    Node::Type::ThematicBreak => ThematicBreak.new,
+    Node::Type::List          => List.new,
+    Node::Type::Item          => Item.new,
+    Node::Type::Paragraph     => Paragraph.new,
+  }
+
+  @tip : Node?
+
+  def tip : Node
+    @tip || raise "tip is not set"
+  end
+
+  def tip? : Node?
+    @tip
+  end
+
+  def tip=(value : Node?) : Node?
+    @tip = value
+  end
+
+  property offset : Int32
+  property column : Int32
+  getter line : String
+  getter current_line : Int32
+  getter blank : Bool
+  getter inline_lexer : Inline
+  getter indent : Int32
+  getter indented : Bool
+  getter next_nonspace : Int32
+  getter refmap : Hash(String, Hash(String, String) | String)
+
+  @oldtip : Node?
+
+  def initialize(@options : Options)
+    @inline_lexer = Inline.new(@options)
+
+    @document = Node.new(Node::Type::Document)
+    @tip = @document
+    @oldtip = @tip
+    @last_matched_container = @tip
+
+    @line = ""
+
+    @current_line = 0
+    @offset = 0
+    @column = 0
+    @last_line_length = 0
+
+    @next_nonspace = 0
+    @next_nonspace_column = 0
+
+    @indent = 0
+    @indented = false
+    @blank = false
+    @partially_consumed_tab = false
+    @all_closed = true
+    @refmap = {} of String => Hash(String, String) | String
+  end
+
+  def parse(source : String) : Node
+    Markd::Utils.timer("block parsing", @options.time) do
+      parse_blocks(source)
+    end
+
+    Markd::Utils.timer("inline parsing", @options.time) do
+      process_inlines
+    end
+
+    @document
+  end
+
+  private def parse_blocks(source)
+    lines_size = 0
+    start = 0
+    pos = 0
+    while pos < source.bytesize
+      byte = source.byte_at(pos)
+      if byte == 10_u8 || byte == 13_u8
+        process_line(source[start, pos - start])
+        lines_size += 1
+        pos += 1 if byte == 13_u8 && pos + 1 < source.bytesize && source.byte_at(pos + 1) == 10_u8
+        start = pos + 1
+      end
+      pos += 1
+    end
+    if start < source.bytesize
+      process_line(source[start, source.bytesize - start])
+      lines_size += 1
+    end
+
+    # Ignore the final blank line after any Markdown line ending.
+    if source.ends_with?('\n') || source.ends_with?('\r')
+      lines_size -= 1
+    end
+
+    while tip = tip?
+      token(tip, lines_size)
+    end
+  end
+
+  private def process_line(line : String)
+    container = @document
+    @oldtip = tip
+    @offset = 0
+    @column = 0
+    @blank = false
+    @partially_consumed_tab = false
+    @current_line += 1
+
+    line = line.gsub('\0', '\u{FFFD}')
+    @line = line
+
+    while (last_child = container.last_child?) && last_child.open?
+      container = last_child
+
+      find_next_nonspace
+
+      case RULES[container.type].continue(self, container)
+      when ContinueStatus::Continue
+        # we've matched, keep going
+      when ContinueStatus::Stop
+        # we've failed to match a block
+        # back up to last matching block
+        container = container.parent
+        break
+      when ContinueStatus::Return
+        # we've hit end of line for fenced code close and can return
+        @last_line_length = line.size
+        return
+      end
+    end
+
+    @all_closed = (container == @oldtip)
+    @last_matched_container = container
+
+    matched_leaf = !container.type.paragraph? && RULES[container.type].accepts_lines?
+
+    while !matched_leaf
+      find_next_nonspace
+
+      # this is a little performance optimization
+      unless @indented
+        first_char = @line[@next_nonspace]?
+        unless first_char && (first_char.ascii_number? || first_char == '#' || first_char == '`' || first_char == '~' || first_char == '*' || first_char == '+' || first_char == '_' || first_char == '=' || first_char == '<' || first_char == '>' || first_char == '-')
+          advance_next_nonspace
+          break
+        end
+      end
+
+      matched = RULES.each_value do |rule|
+        case rule.match(self, container)
+        when MatchValue::Container
+          container = tip
+          break true
+        when MatchValue::Leaf
+          container = tip
+          matched_leaf = true
+          break true
+        else
+          false
+        end
+      end
+
+      # nothing matched
+      unless matched
+        advance_next_nonspace
+        break
+      end
+    end
+
+    if !@all_closed && !@blank && tip.type.paragraph?
+      # lazy paragraph continuation
+      add_line
+    else
+      # not a lazy continuation
+      close_unmatched_blocks
+      if @blank && (last_child = container.last_child?)
+        last_child.last_line_blank = true
+      end
+
+      container_type = container.type
+      last_line_blank = @blank &&
+                        !(container_type.block_quote? ||
+                          (container_type.code_block? && container.fenced?) ||
+                          (container_type.item? && !container.first_child? && container.source_pos[0][0] == @current_line))
+
+      cont = container
+      while cont
+        cont.last_line_blank = last_line_blank
+        cont = cont.parent?
+      end
+
+      if RULES[container_type].accepts_lines?
+        add_line
+
+        # if HtmlBlock, check for end condition
+        if (container_type.html_block? && match_html_block?(container))
+          token(container, @current_line)
+        end
+      elsif @offset < line.size && !@blank
+        # create paragraph container for line
+        add_child(Node::Type::Paragraph, @offset)
+        advance_next_nonspace
+        add_line
+      end
+
+      @last_line_length = line.size
+    end
+
+    nil
+  end
+
+  private def process_inlines
+    walker = @document.walker
+    @inline_lexer.refmap = @refmap
+    while (event = walker.next)
+      node, entering = event
+      if !entering && (node.type.paragraph? || node.type.heading?)
+        @inline_lexer.parse(node)
+      end
+    end
+
+    nil
+  end
+
+  def token(container : Node, line_number : Int32) : Nil
+    container_parent = container.parent?
+
+    container.open = false
+    container.source_pos = {
+      container.source_pos[0],
+      {line_number, @last_line_length},
+    }
+    RULES[container.type].token(self, container)
+
+    @tip = container_parent
+
+    nil
+  end
+
+  private def add_line
+    if @partially_consumed_tab
+      @offset += 1 # skip over tab
+      # add space characters
+      chars_to_tab = CODE_INDENT - (@column % 4)
+      tip.text += " " * chars_to_tab
+    end
+
+    tip.text += @line[@offset..-1] + "\n"
+
+    nil
+  end
+
+  def add_child(type : Node::Type, offset : Int32) : Node
+    while !RULES[tip.type].can_contain?(type)
+      token(tip, @current_line - 1)
+    end
+
+    column_number = offset + 1 # offset 0 = column 1
+
+    node = Node.new(type)
+    node.source_pos = { {@current_line, column_number}, {0, 0} }
+    node.text = ""
+    tip.append_child(node)
+    @tip = node
+
+    node
+  end
+
+  def close_unmatched_blocks : Nil
+    unless @all_closed
+      while (oldtip = @oldtip) && oldtip != @last_matched_container
+        parent = oldtip.parent?
+        token(oldtip, @current_line - 1)
+        @oldtip = parent
+      end
+      @all_closed = true
+    end
+    nil
+  end
+
+  private def find_next_nonspace
+    offset = @offset
+    column = @column
+
+    if @line.empty?
+      @blank = true
+    else
+      while char = @line[offset]?
+        case char
+        when ' '
+          offset += 1
+          column += 1
+        when '\t'
+          offset += 1
+          column += (4 - (column % 4))
+        else
+          break
+        end
+      end
+
+      @blank = char.nil? || char == '\n' || char == '\r'
+    end
+
+    @next_nonspace = offset
+    @next_nonspace_column = column
+    @indent = @next_nonspace_column - @column
+    @indented = @indent >= CODE_INDENT
+
+    nil
+  end
+
+  def advance_offset(count : Int32, columns : Bool = false) : Nil
+    line = @line
+    while count > 0 && (char = line[@offset]?)
+      if char == '\t'
+        chars_to_tab = CODE_INDENT - (@column % 4)
+        if columns
+          @partially_consumed_tab = chars_to_tab > count
+          chars_to_advance = chars_to_tab > count ? count : chars_to_tab
+          @column += chars_to_advance
+          @offset += @partially_consumed_tab ? 0 : 1
+          count -= chars_to_advance
+        else
+          @partially_consumed_tab = false
+          @column += chars_to_tab
+          @offset += 1
+          count -= 1
+        end
+      else
+        @partially_consumed_tab = false
+        @column += 1 # assume ascii; block starts are ascii
+        @offset += 1
+        count -= 1
+      end
+    end
+
+    nil
+  end
+
+  def advance_next_nonspace : Nil
+    @offset = @next_nonspace
+    @column - @next_nonspace_column
+    @partially_consumed_tab = false
+
+    nil
+  end
+
+  private def match_html_block?(container : Node)
+    if block_type = container.data["html_block_type"]
+      block_type = block_type.as(Int32)
+      block_type >= 0 && block_type <= 4 && HTML_BLOCK_CLOSE[block_type].match(@line[@offset..-1])
+    else
+      false
+    end
+  end
+end
+
+# ── markd/parsers/inline.cr ──
+
+# ── markd/rule.cr ──
+
+# Match Value
+#
+# - None: no match
+# - Container: match container, keep going
+# - Leaf: match leaf, no more block starts
+pub enum MatchValue
+  None
+  Container
+  Leaf
+end
+
+pub enum ContinueStatus
+  Continue
+  Stop
+  Return
+end
+
+private def space_or_tab?(char : Char?) : Bool
+  char == ' ' || char == '\t'
+end
+
+private def ascii_blank?(text : String) : Bool
+  text.each_char do |char|
+    return false unless char.ascii_whitespace?
+  end
+  true
+end
+
+# ── markd/rules/block_quote.cr ──
+
+pub struct BlockQuote
+  def match(parser : Parser, container : Node) : MatchValue
+    if match?(parser)
+      seek(parser)
+      parser.close_unmatched_blocks
+      parser.add_child(Node::Type::BlockQuote, parser.next_nonspace)
+
+      MatchValue::Container
+    else
+      MatchValue::None
+    end
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    if match?(parser)
+      seek(parser)
+      ContinueStatus::Continue
+    else
+      ContinueStatus::Stop
+    end
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    # do nothing
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    !type.item?
+  end
+
+  def accepts_lines? : Bool
+    false
+  end
+
+  private def match?(parser)
+    !parser.indented && parser.line[parser.next_nonspace]? == '>'
+  end
+
+  private def seek(parser : Parser)
+    parser.advance_next_nonspace
+    parser.advance_offset(1, false)
+
+    if space_or_tab?(parser.line[parser.offset]?)
+      parser.advance_offset(1, true)
+    end
+  end
+end
+
+# ── markd/rules/code_block.cr ──
+
+pub struct CodeBlock
+  CODE_FENCE         = /^(?:`{3,}|~{3,})/
+  CLOSING_CODE_FENCE = /^(?:`{3,}|~{3,}) *$/
+
+  def match(parser : Parser, container : Node) : MatchValue
+    if !parser.indented &&
+       (match = parser.line[parser.next_nonspace..-1].match(CODE_FENCE))
+      # fenced
+      fence_length = match[0].size
+      rest = parser.line[parser.next_nonspace + fence_length..-1]
+      return MatchValue::None if match[0][0] == '`' && rest.includes?("`")
+
+      parser.close_unmatched_blocks
+      node = parser.add_child(Node::Type::CodeBlock, parser.next_nonspace)
+      node.fenced = true
+      node.fence_length = fence_length
+      node.fence_char = match[0][0].to_s
+      node.fence_offset = parser.indent
+
+      parser.advance_next_nonspace
+      parser.advance_offset(fence_length, false)
+
+      MatchValue::Leaf
+    elsif parser.indented && !parser.blank && (tip = parser.tip) &&
+          !tip.type.paragraph?
+      # indented
+      parser.advance_offset(CODE_INDENT, true)
+      parser.close_unmatched_blocks
+      parser.add_child(Node::Type::CodeBlock, parser.offset)
+
+      MatchValue::Leaf
+    else
+      MatchValue::None
+    end
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    line = parser.line
+    indent = parser.indent
+    if container.fenced?
+      # fenced
+      match = indent <= 3 &&
+              line[parser.next_nonspace]? == container.fence_char[0] &&
+              line[parser.next_nonspace..-1].match(CLOSING_CODE_FENCE)
+
+      if match && match.as(Regex::MatchData)[0].rstrip.size >= container.fence_length
+        # closing fence - we're at end of line, so we can return
+        parser.token(container, parser.current_line)
+        return ContinueStatus::Return
+      else
+        # skip optional spaces of fence offset
+        index = container.fence_offset
+        while index > 0 && space_or_tab?(parser.line[parser.offset]?)
+          parser.advance_offset(1, true)
+          index -= 1
+        end
+      end
+    else
+      # indented
+      if indent >= CODE_INDENT
+        parser.advance_offset(CODE_INDENT, true)
+      elsif parser.blank
+        parser.advance_next_nonspace
+      else
+        return ContinueStatus::Stop
+      end
+    end
+
+    ContinueStatus::Continue
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    if container.fenced?
+      # fenced
+      first_line, _, text = container.text.partition('\n')
+
+      container.fence_language = Markd::Utils.decode_entities_string(first_line.strip)
+      container.text = text
+    else
+      # indented
+      container.text = container.text.gsub(/(\n *)+$/, "\n")
+    end
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    false
+  end
+
+  def accepts_lines? : Bool
+    true
+  end
+end
+
+# ── markd/rules/document.cr ──
+
+pub struct Document
+  def match(parser : Parser, container : Node) : MatchValue
+    MatchValue::None
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    ContinueStatus::Continue
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    # do nothing
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    !type.item?
+  end
+
+  def accepts_lines? : Bool
+    false
+  end
+end
+
+# ── markd/rules/heading.cr ──
+
+pub struct Heading
+  ATX_HEADING_MARKER    = /^\#{1,6}(?:[ \t]+|$)/
+  SETEXT_HEADING_MARKER = /^(?:=+|-+)[ \t]*$/
+
+  def match(parser : Parser, container : Node) : MatchValue
+    if match = match?(parser, ATX_HEADING_MARKER)
+      # ATX Heading matched
+      parser.advance_next_nonspace
+      parser.advance_offset(match[0].size, false)
+      parser.close_unmatched_blocks
+
+      container = parser.add_child(Node::Type::Heading, parser.next_nonspace)
+      container.data["level"] = match[0].strip.size
+      container.text = parser.line[parser.offset..-1]
+        .sub(/^[ \t]*#+[ \t]*$/, "")
+        .sub(/[ \t]+#+[ \t]*$/, "")
+
+      parser.advance_offset(parser.line.size - parser.offset)
+
+      MatchValue::Leaf
+    elsif (match = match?(parser, SETEXT_HEADING_MARKER)) &&
+          container.type.paragraph? && (parent = container.parent?) &&
+          !parent.type.block_quote?
+      # Setext Heading matched
+      parser.close_unmatched_blocks
+
+      while container.text[0]? == '[' &&
+            (pos = parser.inline_lexer.reference(container.text, parser.refmap)) && pos > 0
+        container.text = container.text[pos, container.text.bytesize - pos]
+      end
+      return MatchValue::None if container.text.empty?
+
+      heading = Node.new(Node::Type::Heading)
+      heading.source_pos = container.source_pos
+      heading.data["level"] = match[0][0] == '=' ? 1 : 2
+      heading.text = container.text
+
+      container.insert_after(heading)
+      container.unlink
+
+      parser.tip = heading
+      parser.advance_offset(parser.line.size - parser.offset, false)
+
+      MatchValue::Leaf
+    else
+      MatchValue::None
+    end
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    # do nothing
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    # a heading can never container > 1 line, so fail to match
+    ContinueStatus::Stop
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    false
+  end
+
+  def accepts_lines? : Bool
+    false
+  end
+
+  private def match?(parser : Parser, regex : Regex) : Regex::MatchData?
+    match = parser.line[parser.next_nonspace..-1].match(regex)
+    !parser.indented && match ? match : nil
+  end
+end
+
+# ── markd/rules/html_block.cr ──
+
+pub struct HTMLBlock
+  def match(parser : Parser, container : Node) : MatchValue
+    if !parser.indented && parser.line[parser.next_nonspace]? == '<'
+      text = parser.line[parser.next_nonspace..-1]
+      block_type_size = HTML_BLOCK_OPEN.size - 1
+
+      HTML_BLOCK_OPEN.each_with_index do |regex, index|
+        if (text.match(regex) &&
+           (index < block_type_size || !container.type.paragraph?))
+          parser.close_unmatched_blocks
+          # We don't adjust parser.offset;
+          # spaces are part of the HTML block:
+          node = parser.add_child(Node::Type::HTMLBlock, parser.offset)
+          node.data["html_block_type"] = index
+
+          return MatchValue::Leaf
+        end
+      end
+    end
+
+    MatchValue::None
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    block_type = container.data["html_block_type"]
+    (parser.blank && (block_type == 5 || block_type == 6)) ? ContinueStatus::Stop : ContinueStatus::Continue
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    container.text = container.text.gsub(/(\n *)+$/, "")
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    false
+  end
+
+  def accepts_lines? : Bool
+    true
+  end
+end
+
+# ── markd/rules/item.cr ──
+
+pub struct Item
+  def match(parser : Parser, container : Node) : MatchValue
+    # match and parse in Rule::List
+    MatchValue::None
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    indent_offset = container.data["marker_offset"].as(Int32) + container.data["padding"].as(Int32)
+
+    if parser.blank
+      if container.first_child?
+        parser.advance_next_nonspace
+      else
+        # Blank line after empty list item
+        return ContinueStatus::Stop
+      end
+    elsif parser.indent >= indent_offset
+      parser.advance_offset(indent_offset, true)
+    else
+      return ContinueStatus::Stop
+    end
+
+    ContinueStatus::Continue
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    # do nothing
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    !type.item?
+  end
+
+  def accepts_lines? : Bool
+    false
+  end
+end
+
+# ── markd/rules/list.cr ──
+
+pub struct List
+  BULLET_LIST_MARKERS  = {'*', '+', '-'}
+  ORDERED_LIST_MARKERS = {'.', ')'}
+
+  def match(parser : Parser, container : Node) : MatchValue
+    if (!parser.indented || container.type.list?)
+      data = parse_list_marker(parser, container)
+      return MatchValue::None unless data && !data.empty?
+
+      parser.close_unmatched_blocks
+      if !parser.tip.type.list? || !list_match?(container.data, data)
+        list_node = parser.add_child(Node::Type::List, parser.next_nonspace)
+        list_node.data = data
+      end
+
+      item_node = parser.add_child(Node::Type::Item, parser.next_nonspace)
+      item_node.data = data
+
+      MatchValue::Container
+    else
+      MatchValue::None
+    end
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    ContinueStatus::Continue
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    item = container.first_child?
+    while item
+      if ends_with_blankline?(item) && item.next?
+        container.data["tight"] = false
+        break
+      end
+
+      subitem = item.first_child?
+      while subitem
+        if ends_with_blankline?(subitem) && (item.next? || subitem.next?)
+          container.data["tight"] = false
+          break
+        end
+
+        subitem = subitem.next?
+      end
+
+      item = item.next?
+    end
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    type.item?
+  end
+
+  def accepts_lines? : Bool
+    false
+  end
+
+  private def list_match?(list_data, item_data)
+    list_data["type"] == item_data["type"] &&
+      list_data["delimiter"] == item_data["delimiter"] &&
+      list_data["bullet_char"] == item_data["bullet_char"]
+  end
+
+  private def parse_list_marker(parser : Parser, container : Node) : Node::DataType
+    empty_data = {} of String => Node::DataValue
+    if parser.indent >= 4
+      return empty_data
+    end
+
+    data = {
+      "delimiter"     => 0,
+      "marker_offset" => parser.indent,
+      "bullet_char"   => "",
+      "tight"         => true, # lists are tight by default
+      "start"         => 1,
+    } of String => Node::DataValue
+
+    line = parser.line[parser.next_nonspace..-1]
+
+    if line[0] == '*' || line[0] == '+' || line[0] == '-'
+      data["type"] = "bullet"
+      data["bullet_char"] = line[0].to_s
+      first_match_size = 1
+    else
+      pos = 0
+      while (digit = line[pos]?) && digit.ascii_number?
+        pos += 1
+      end
+      number = pos >= 1 ? line[0..pos - 1].to_i : -1
+      if pos >= 1 && pos <= 9 && (line[pos]? == '.' || line[pos]? == ')') &&
+         (!container.type.paragraph? || number == 1)
+        data["type"] = "ordered"
+        data["start"] = number
+        data["delimiter"] = line[pos].to_s
+        first_match_size = pos + 1
+      else
+        return empty_data
+      end
+    end
+
+    next_char = parser.line[parser.next_nonspace + first_match_size]?
+    unless next_char.nil? || space_or_tab?(next_char)
+      return empty_data
+    end
+
+    if container.type.paragraph? &&
+       ascii_blank?(parser.line[(parser.next_nonspace + first_match_size)..-1])
+      return empty_data
+    end
+
+    parser.advance_next_nonspace
+    parser.advance_offset(first_match_size, true)
+    spaces_start_column = parser.column
+    spaces_start_offset = parser.offset
+
+    loop do
+      parser.advance_offset(1, true)
+      next_char = parser.line[parser.offset]?
+
+      break unless parser.column - spaces_start_column < 5 && space_or_tab?(next_char)
+    end
+
+    blank_item = parser.line[parser.offset]?.nil?
+    spaces_after_marker = parser.column - spaces_start_column
+    if spaces_after_marker >= 5 || spaces_after_marker < 1 || blank_item
+      data["padding"] = first_match_size + 1
+      parser.column = spaces_start_column
+      parser.offset = spaces_start_offset
+
+      parser.advance_offset(1, true) if space_or_tab?(parser.line[parser.offset]?)
+    else
+      data["padding"] = first_match_size + spaces_after_marker
+    end
+
+    data
+  end
+
+  private def ends_with_blankline?(container : Node) : Bool
+    while container
+      return true if container.last_line_blank?
+
+      break unless !container.last_line_checked? && (container.type == Node::Type::List || container.type == Node::Type::Item)
+      container.last_line_checked = true
+      container = container.last_child?
+    end
+
+    false
+  end
+end
+
+# ── markd/rules/paragraph.cr ──
+
+pub struct Paragraph
+  def match(parser : Parser, container : Node) : MatchValue
+    MatchValue::None
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    parser.blank ? ContinueStatus::Stop : ContinueStatus::Continue
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    has_reference_defs = false
+
+    while container.text[0]? == '[' &&
+          (pos = parser.inline_lexer.reference(container.text, parser.refmap)) && pos > 0
+      container.text = container.text[pos, container.text.bytesize - pos]
+      has_reference_defs = true
+    end
+
+    container.unlink if has_reference_defs && ascii_blank?(container.text)
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    false
+  end
+
+  def accepts_lines? : Bool
+    true
+  end
+end
+
+# ── markd/rules/thematic_break.cr ──
+
+pub struct ThematicBreak
+  THEMATIC_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})[ \t]*$/
+
+  def match(parser : Parser, container : Node) : MatchValue
+    if !parser.indented && parser.line[parser.next_nonspace..-1].match(THEMATIC_BREAK)
+      parser.close_unmatched_blocks
+      parser.add_child(Node::Type::ThematicBreak, parser.next_nonspace)
+      parser.advance_offset(parser.line.size - parser.offset, false)
+      MatchValue::Leaf
+    else
+      MatchValue::None
+    end
+  end
+
+  def continue(parser : Parser, container : Node) : ContinueStatus
+    # a thematic break can never container > 1 line, so fail to match:
+    ContinueStatus::Stop
+  end
+
+  def token(parser : Parser, container : Node) : Nil
+    # do nothing
+  end
+
+  def can_contain?(type : Node::Type) : Bool
+    false
+  end
+
+  def accepts_lines? : Bool
+    false
+  end
+end

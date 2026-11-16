@@ -1,0 +1,16 @@
+module markd
+
+import markd/block_inline_parser
+import markd/html_renderer_renderer::{HTMLRenderer}
+import markd/options::{Options}
+import markd/version
+
+pub VERSION = Markd::Version::VERSION
+
+pub def to_html(source : String, options : Markd::Options::Options = Markd::Options::Options.new) : String
+  return "" if source.empty?
+
+  document = Markd::BlockInlineParser.parse(source, options)
+  renderer = HTMLRenderer.new(options)
+  renderer.render(document)
+end

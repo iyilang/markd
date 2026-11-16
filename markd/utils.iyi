@@ -1,0 +1,25 @@
+module markd/utils
+
+import std/regex::{Regex}
+import std/time::{Time}
+import markd/h_t_m_l_entities::{decode_entities}
+
+pub def timer(label : String, measure_time : Bool, & : -> Nil) : Nil
+  unless measure_time
+    yield
+    return
+  end
+
+  started = Time.monotonic
+  yield
+  puts "#{label}: #{(Time.monotonic - started).total_milliseconds}ms"
+end
+
+ESCAPABLE             = %Q([!"#$%&'()*+,./:;<=>?@[\\\\\\]^_`{|}~-])
+DECODE_ENTITIES_REGEX = Regex.compile("\\\\" + ESCAPABLE, Regex::Options::IGNORE_CASE)
+
+pub def decode_entities_string(text : String) : String
+  DECODE_ENTITIES_REGEX.replace(decode_entities(text)) do |match|
+    match[1, match.bytesize - 1]
+  end
+end

@@ -1,0 +1,35 @@
+module markd/h_t_m_l_entities/encoder
+
+import std/text
+import markd/h_t_m_l_entities/entities::{ENTITIES_MAPPINGS}
+
+# Keep the first name for each single-character value, as the source table
+# orders it. Multi-character values are encoded one character at a time.
+def reverse_entities : Hash(Char, String)
+  result = {} of Char => String
+  ENTITIES_MAPPINGS.each do |name, value|
+    if value.size == 1
+      value.each_char do |char|
+        result[char] = name unless result.has_key?(char)
+      end
+    end
+  end
+  result
+end
+
+NAMES = reverse_entities
+
+# An alternative to the upstream HTML.encode_entities reopening.
+pub def encode_entities(source : String) : String
+  String.build(source.bytesize) do |builder|
+    source.each_char do |char|
+      if name = NAMES[char]?
+        builder << '&' << name << ';'
+      elsif char.ord < 0x20 || char.ord > 0x7E
+        builder << "&#x" << char.ord.to_s(16).upcase << ';'
+      else
+        builder << char
+      end
+    end
+  end
+end

@@ -1,0 +1,18 @@
+module markd/entities_test
+
+import markd/h_t_m_l_entities::{decode_entity, decode_entities}
+import markd/utils::{decode_entities_string, timer}
+
+assert decode_entity("amp") == "&"
+assert decode_entity("NotEqualTilde") == "≂̸"
+assert decode_entity("ThisIsNotDefined") == "&ThisIsNotDefined;"
+assert decode_entity("#35") == "#"
+assert decode_entity("#x80") == "€"
+assert decode_entity("#0") == "�"
+assert decode_entities("Fish &amp; Chips") == "Fish & Chips"
+assert decode_entities("plain") == "plain"
+assert decode_entities("&MadeUpEntity;") == "&MadeUpEntity;"
+assert decode_entities_string("\\* &amp; \\<") == "* & <"
+called = false
+timer("test", false) { called = true; nil }
+assert called

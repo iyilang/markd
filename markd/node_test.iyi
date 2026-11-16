@@ -1,0 +1,38 @@
+module markd/node_test
+
+import markd/node::{Node}
+
+root = Node.new(Node::Type::Document)
+paragraph = Node.new(Node::Type::Paragraph)
+text = Node.new(Node::Type::Text)
+text.text = "hello"
+assert root.append_child(paragraph) == paragraph
+assert paragraph.append_child(text) == text
+
+assert root.first_child? == paragraph
+assert root.last_child? == paragraph
+assert paragraph.parent? == root
+assert text.parent? == paragraph
+
+walker = root.walker
+assert walker.next == {root, true}
+assert walker.next == {paragraph, true}
+assert walker.next == {text, true}
+assert walker.next == {paragraph, false}
+assert walker.next == {root, false}
+assert walker.next.nil?
+
+second = Node.new(Node::Type::Paragraph)
+assert paragraph.insert_after(second) == root
+assert root.last_child? == second
+assert paragraph.next? == second
+assert second.prev? == paragraph
+assert second.parent? == root
+paragraph.unlink
+assert root.first_child? == second
+assert second.prev?.nil?
+assert paragraph.parent?.nil?
+root.append_child(paragraph)
+assert root.last_child? == paragraph
+assert second.next? == paragraph
+assert paragraph.prev? == second

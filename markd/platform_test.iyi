@@ -1,0 +1,17 @@
+module markd/platform_test
+
+import std/env::{ENV}
+import std/random::{Random}
+import std/time::{Time}
+
+ENV["IYI_MARKD_PLATFORM_PROBE"] = "değer-日本"
+assert ENV["IYI_MARKD_PLATFORM_PROBE"]? == "değer-日本"
+ENV["IYI_MARKD_PLATFORM_PROBE"] = nil
+assert ENV["IYI_MARKD_PLATFORM_PROBE"]?.nil?
+
+assert Random.new(7, 3).next_u == 3682281251_u32
+assert Random::Secure.random_bytes(16).size == 16
+assert Time.utc(2000, 1, 1).to_unix == 946684800_i64
+start = Time.monotonic.total_nanoseconds
+finish = Time.monotonic.total_nanoseconds
+assert finish >= start

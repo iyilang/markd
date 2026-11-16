@@ -1,0 +1,64 @@
+module markd_test
+
+import markd
+import markd/options::{Options}
+import std/uri::{URI}
+import markd/node::{Node}
+import markd/inline_parser::{Inline}
+import std/io::{Memory}
+
+assert Markd.to_html("") == ""
+assert Markd.to_html("hello") == "<p>hello</p>\n"
+assert Markd.to_html("# hello") == "<h1>hello</h1>\n"
+assert Markd.to_html("*hello*") == "<p><em>hello</em></p>\n"
+assert Markd.to_html("**hello**") == "<p><strong>hello</strong></p>\n"
+assert Markd.to_html("alpha\r\nbeta") == "<p>alpha\nbeta</p>\n"
+assert Markd.to_html("alpha\rbeta") == "<p>alpha\nbeta</p>\n"
+assert Markd.to_html("# title\r\rparagraph\r") == "<h1>title</h1>\n<p>paragraph</p>\n"
+assert Markd.to_html("```\r\ncode\r\n```\r\n") == "<pre><code>code\n</code></pre>\n"
+assert Markd.to_html("```\rcode\r```\r") == "<pre><code>code\n</code></pre>\n"
+assert Markd.to_html("a\r\nb\rc\nd") == "<p>a\nb\nc\nd</p>\n"
+positioned = Options.new(source_pos: true)
+assert Markd.to_html("# a\r\rtext\r", positioned) == Markd.to_html("# a\n\ntext\n", positioned)
+assert Markd.to_html("[ΑΓΩ]: /url\n\n[αγω]") == "<p><a href=\"/url\">αγω</a></p>\n"
+assert Markd.to_html("[ТОЛПОЙ]: /url\n\n[Толпой]") == "<p><a href=\"/url\">Толпой</a></p>\n"
+assert Markd.to_html("[foo](bar)") == "<p><a href=\"bar\">foo</a></p>\n"
+assert Markd.to_html("![](bar)") == "<p><img src=\"bar\" alt=\"\" /></p>\n"
+options = Options.new
+options.base_url = URI.parse("http://example.com")
+assert Markd.to_html("[foo](bar)", options) == "<p><a href=\"http://example.com/bar\">foo</a></p>\n"
+assert Markd.to_html("![](bar)", options) == "<p><img src=\"http://example.com/bar\" alt=\"\" /></p>\n"
+assert Markd.to_html("[foo](https://example.com/baz)", options) == "<p><a href=\"https://example.com/baz\">foo</a></p>\n"
+assert Markd.to_html("![](https://example.com/baz)", options) == "<p><img src=\"https://example.com/baz\" alt=\"\" /></p>\n"
+
+raw = "```\"><script>window.location=\"https://footbar.com\"</script>\n```"
+assert Markd.to_html(raw) == "<pre><code class=\"language-&quot;&gt;&lt;script&gt;window.location=&quot;https://footbar.com&quot;&lt;/script&gt;\"></code></pre>\n"
+
+safe = Options.new(safe: true)
+assert Markd.to_html("<script>alert(1)</script>", safe) == "<!-- raw HTML omitted -->\n"
+assert Markd.to_html("[bad](javascript:alert%281%29)", safe) == "<p><a>bad</a></p>\n"
+
+root = Node.new(Node::Type::Document)
+first = Node.new(Node::Type::Text)
+second = Node.new(Node::Type::Text)
+root.append_child(first)
+root.append_child(second)
+assert root.last_child == second
+assert first.next == second
+assert second.prev == first
+walker = root.walker
+walker.resume_at(first, true)
+assert walker.next == {first, true}
+buffer = Memory.new
+Node.new(Node::Type::Text).to_s(buffer)
+assert buffer.to_s.includes?(" @type=")
+
+first_bracket = Inline::Bracket.new(first, nil, nil, 0, false)
+second_bracket = Inline::Bracket.new(second, nil, nil, 1, false)
+second_bracket.previous = first_bracket
+assert second_bracket.previous == first_bracket
+first_delimiter = Inline::Delimiter.new('*', 1, 1, first, nil, nil, true, false)
+second_delimiter = Inline::Delimiter.new('*', 1, 1, second, first_delimiter, nil, false, true)
+first_delimiter.next = second_delimiter
+assert first_delimiter.next == second_delimiter
+assert second_delimiter.previous == first_delimiter

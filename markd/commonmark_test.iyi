@@ -1,0 +1,63 @@
+module markd/commonmark_test
+
+import std/file
+import std/text
+import markd
+import markd/options::{Options}
+
+def run_fixture(path : String, expected_count : Int32, smart : Bool) : Int32
+  options = Options.new(smart: smart)
+  marker = "`" * 32
+  state = 0
+  line_number = 0
+  example_line = 0
+  count = 0
+  failures = 0
+  ended = false
+  markdown = String::Builder.new
+  expected = String::Builder.new
+
+  File.each_line(path) do |line|
+    line_number += 1
+    if !ended && line.includes?("<!-- END TESTS -->")
+      ended = true
+    elsif !ended && state == 0
+      if line == marker + " example"
+        state = 1
+        example_line = line_number
+        markdown = String::Builder.new
+        expected = String::Builder.new
+      end
+    elsif !ended && state == 1
+      if line == "."
+        state = 2
+      else
+        markdown << line.gsub("→", "\t") << "\n"
+      end
+    elsif !ended && state == 2
+      if line.starts_with?(marker)
+        count += 1
+        actual = Markd.to_html(markdown.to_s.chomp, options)
+        wanted = expected.to_s
+        if actual != wanted
+          failures += 1
+          puts "FAIL #{path}:#{example_line}"
+          puts "input:    #{markdown.to_s.inspect}"
+          puts "expected: #{wanted.inspect}"
+          puts "actual:   #{actual.inspect}"
+        end
+        state = 0
+      else
+        expected << line.gsub("→", "\t") << "\n"
+      end
+    end
+  end
+  raise "#{path}: incomplete example" unless state == 0
+  raise "#{path}: expected #{expected_count} examples, got #{count}" unless count == expected_count
+  failures
+end
+
+failures = run_fixture("spec/fixtures/spec.txt", 649, false)
+failures += run_fixture("spec/fixtures/smart_punct.txt", 15, true)
+failures += run_fixture("spec/fixtures/regression.txt", 14, false)
+raise "#{failures} upstream examples failed" unless failures == 0

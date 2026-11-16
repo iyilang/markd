@@ -1,0 +1,24 @@
+module markd/h_t_m_l_entities
+
+import std/html::{HTML}
+import std/regex::{Regex}
+import markd/h_t_m_l_entities/entities::{ENTITIES_MAPPINGS}
+
+ENTITY = Regex.compile("&(?:([a-zA-Z0-9]{2,32};)|(#[xX][\\da-fA-F]+;?|#\\d+;?))")
+
+# The source table contains the HTML5 names that std/html does not carry.
+# Numeric references use std/html's Unicode and Windows-1252 conversion.
+pub def decode_entity(name : String) : String
+  if name.starts_with?("#")
+    HTML.unescape("&#{name};")
+  else
+    ENTITIES_MAPPINGS[name]? || "&#{name};"
+  end
+end
+
+pub def decode_entities(source : String) : String
+  return source unless source.includes?("&")
+  ENTITY.replace(source) do |match|
+    decode_entity(match[1, match.bytesize - 2])
+  end
+end

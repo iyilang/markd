@@ -1,0 +1,116 @@
+module markd/renderer
+
+import std/io
+import std/text
+import markd/node::{Node}
+import markd/options::{Options}
+import markd/utils
+
+pub abstract class Renderer
+  abstract def heading(node : Node, entering : Bool) : String?
+  abstract def list(node : Node, entering : Bool) : String?
+  abstract def item(node : Node, entering : Bool) : String?
+  abstract def block_quote(node : Node, entering : Bool) : String?
+  abstract def thematic_break(node : Node, entering : Bool) : String?
+  abstract def code_block(node : Node, entering : Bool) : String?
+  abstract def code(node : Node, entering : Bool) : String?
+  abstract def html_block(node : Node, entering : Bool) : String?
+  abstract def html_inline(node : Node, entering : Bool) : String
+  abstract def paragraph(node : Node, entering : Bool) : String?
+  abstract def emphasis(node : Node, entering : Bool) : String?
+  abstract def soft_break(node : Node, entering : Bool) : String
+  abstract def line_break(node : Node, entering : Bool) : String?
+  abstract def strong(node : Node, entering : Bool) : String?
+  abstract def link(node : Node, entering : Bool) : String?
+  abstract def image(node : Node, entering : Bool) : Int32 | String | Nil
+  abstract def text(node : Node, entering : Bool) : String
+
+  def initialize(@options : Options = Options.new)
+    @output_io = String::Builder.new
+    @last_output = "\n"
+  end
+
+  def output(string : String) : String
+    literal(escape(string))
+  end
+
+  def literal(string : String) : String
+    @output_io << string
+    @last_output = string
+  end
+
+  # render a Line Feed character
+  def newline : String?
+    literal("\n") if @last_output != "\n"
+  end
+
+  def escape(text : String) : String
+    return text unless has_escape_char?(text)
+    out = String::Builder.new(text.bytesize)
+    text.each_byte do |byte|
+      case byte
+      when 38_u8 then out << "&amp;"
+      when 34_u8 then out << "&quot;"
+      when 60_u8 then out << "&lt;"
+      when 62_u8 then out << "&gt;"
+      else            out.write_byte(byte)
+      end
+    end
+    out.to_s
+  end
+
+  private def has_escape_char?(text : String) : Bool
+    text.each_byte do |byte|
+      return true if byte == 38_u8 || byte == 34_u8 || byte == 60_u8 || byte == 62_u8
+    end
+    false
+  end
+
+  def render(document : Node) : String
+    Markd::Utils.timer("rendering", @options.time) do
+      walker = document.walker
+      while event = walker.next
+        node, entering = event
+
+        case node.type
+        when Node::Type::Heading
+          heading(node, entering)
+        when Node::Type::List
+          list(node, entering)
+        when Node::Type::Item
+          item(node, entering)
+        when Node::Type::BlockQuote
+          block_quote(node, entering)
+        when Node::Type::ThematicBreak
+          thematic_break(node, entering)
+        when Node::Type::CodeBlock
+          code_block(node, entering)
+        when Node::Type::Code
+          code(node, entering)
+        when Node::Type::HTMLBlock
+          html_block(node, entering)
+        when Node::Type::HTMLInline
+          html_inline(node, entering)
+        when Node::Type::Paragraph
+          paragraph(node, entering)
+        when Node::Type::Emphasis
+          emphasis(node, entering)
+        when Node::Type::SoftBreak
+          soft_break(node, entering)
+        when Node::Type::LineBreak
+          line_break(node, entering)
+        when Node::Type::Strong
+          strong(node, entering)
+        when Node::Type::Link
+          link(node, entering)
+        when Node::Type::Image
+          image(node, entering)
+        else
+          text(node, entering)
+        end
+      end
+    end
+
+    @output_io.to_s.sub("\n", "")
+  end
+end

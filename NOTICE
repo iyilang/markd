@@ -1,0 +1,9 @@
+iyi-markd
+
+Ported from icyleaf/markd v0.5.0, commit d61dd52d40e659b53cb78712a7b1190cfdb9bc66.
+Copyright (c) 2017-present icyleaf. Licensed under the MIT License; see LICENSE.
+Copyright (c) 2026 the iyi-markd authors (the iyi port).
+
+The upstream CommonMark 0.29 specification fixture is by John MacFarlane and
+licensed under Creative Commons Attribution-ShareAlike 4.0 International:
+https://creativecommons.org/licenses/by-sa/4.0/

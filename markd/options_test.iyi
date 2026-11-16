@@ -1,0 +1,25 @@
+module markd/options_test
+
+import markd/options::{Options}
+import std/uri::{URI}
+
+options = Options.new
+assert !options.time
+assert !options.gfm
+assert !options.toc
+assert !options.smart?
+assert !options.source_pos?
+assert !options.safe?
+assert !options.prettyprint?
+assert options.base_url.nil?
+options.smart = true
+options.source_pos = true
+options.safe = true
+options.prettyprint = true
+options.base_url = URI.parse("https://example.com/root/")
+assert options.smart && options.smart?
+assert options.source_pos && options.source_pos?
+assert options.safe && options.safe?
+assert options.prettyprint && options.prettyprint?
+base_url = options.base_url || raise "missing base URL"
+assert base_url.to_s == "https://example.com/root/"
