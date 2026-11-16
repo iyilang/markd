@@ -103,13 +103,27 @@ pub class Block
 
   private def parse_blocks(source)
     lines_size = 0
-    source.each_line do |line|
-      process_line(line)
+    start = 0
+    pos = 0
+    while pos < source.bytesize
+      byte = source.byte_at(pos)
+      if byte == 10_u8 || byte == 13_u8
+        process_line(source[start, pos - start])
+        lines_size += 1
+        pos += 1 if byte == 13_u8 && pos + 1 < source.bytesize && source.byte_at(pos + 1) == 10_u8
+        start = pos + 1
+      end
+      pos += 1
+    end
+    if start < source.bytesize
+      process_line(source[start, source.bytesize - start])
       lines_size += 1
     end
 
-    # ignore last blank line created by final newline
-    lines_size -= 1 if source.ends_with?('\n')
+    # Ignore the final blank line after any Markdown line ending.
+    if source.ends_with?('\n') || source.ends_with?('\r')
+      lines_size -= 1
+    end
 
     while tip = tip?
       token(tip, lines_size)

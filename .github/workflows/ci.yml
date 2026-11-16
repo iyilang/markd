@@ -10,42 +10,138 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: pwsh
     env:
       IYI_VERSION: 0.21.0
+      IYI_TEST_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Install iyi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure MSVC x64
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install iyi on Linux and macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          IYI_PREFIX: ${{ runner.temp }}/iyi
         run: |
-          curl -fsSL "https://raw.githubusercontent.com/iyilang/iyi/v${IYI_VERSION}/install.sh" | IYI_PREFIX="$HOME/.iyi" IYI_VERSION="$IYI_VERSION" sh
-          echo "$HOME/.iyi/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/iyilang/iyi/v${IYI_VERSION}/install.sh" | sh
+          echo "$IYI_PREFIX/bin" >> "$GITHUB_PATH"
 
-      - run: iyi version
+      - name: Install iyi on Windows
+        if: runner.os == 'Windows'
+        env:
+          IYI_PREFIX: ${{ runner.temp }}/iyi
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "install-iyi.ps1"
+          Invoke-WebRequest "https://raw.githubusercontent.com/iyilang/iyi/v$env:IYI_VERSION/install.ps1" -OutFile $installer
+          & pwsh -NoProfile -ExecutionPolicy Bypass -File $installer -NoPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $env:IYI_PREFIX "bin") -Encoding utf8
+          if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") { throw "Expected a Windows x86-64 runner" }
+          Get-Command cl.exe -ErrorAction Stop | Select-Object -ExpandProperty Source
+
+      - name: Verify compiler version
+        run: |
+          $version = (& iyi version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host $version
+          if (-not $version.StartsWith("iyi $env:IYI_VERSION ")) { throw "Unexpected iyi version: $version" }
+
+      - name: Verify byte-exact checkout
+        run: python scripts/check_checkout.py
 
       - name: Test
         run: iyi test .
 
       - name: Build every module
         run: |
-          iyi build markd.iyi -o "$RUNNER_TEMP/markd-module"
-          for module in $(find markd -name '*.iyi' ! -name '*_test.iyi' -type f); do
-            iyi build "$module" -o "$RUNNER_TEMP/markd-module"
-          done
+          $exe = Join-Path $env:RUNNER_TEMP $(if ($IsWindows) { "markd-module.exe" } else { "markd-module" })
+          & iyi build markd.iyi -o $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $modules = Get-ChildItem -Path markd -Filter "*.iyi" -File -Recurse |
+            Where-Object { -not $_.Name.EndsWith("_test.iyi") } |
+            Sort-Object FullName
+          foreach ($module in $modules) {
+            Write-Host "building $($module.FullName)"
+            & iyi build $module.FullName -o $exe
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Test from artifacts
         run: |
-          for test in markd_test.iyi markd/*_test.iyi; do
-            mods="$RUNNER_TEMP/mods/$(basename "$test" .iyi)"
-            mkdir -p "$mods"
-            iyi build --emit-iyimod "$mods" "$test" -o "$RUNNER_TEMP/emitted"
-            iyi build --use-iyimod "$mods" "$test" -o "$RUNNER_TEMP/reused"
-            "$RUNNER_TEMP/reused"
-          done
+          $tests = @(Get-Item markd_test.iyi) + @(Get-ChildItem -Path markd -Filter "*_test.iyi" -File)
+          $emitted = Join-Path $env:RUNNER_TEMP $(if ($IsWindows) { "emitted.exe" } else { "emitted" })
+          $reused = Join-Path $env:RUNNER_TEMP $(if ($IsWindows) { "reused.exe" } else { "reused" })
+          foreach ($test in $tests) {
+            $mods = Join-Path $env:RUNNER_TEMP "mods/$($test.BaseName)"
+            New-Item -ItemType Directory -Path $mods -Force | Out-Null
+            & iyi build --emit-iyimod $mods $test.FullName -o $emitted
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & iyi build --use-iyimod $mods $test.FullName -o $reused
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $reused
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Check formatting
         run: iyi fmt --check markd.iyi markd_test.iyi markd
 
       - name: Vet
         run: iyi vet markd_test.iyi
+
+      - name: Resolve and run a cold-cache consumer
+        run: |
+          function Test-Reach([string] $text) {
+            $line = @($text -split "`n" | Where-Object { $_ -match '^github\.com/iyilang/markd ' })
+            if ($line.Count -ne 1 -or $line[0] -match '[;:]\s*(C|links)\s') { return $false }
+            foreach ($name in @("std/env", "std/random", "std/time")) {
+              if (-not $line[0].Contains($name)) { return $false }
+            }
+            return $true
+          }
+          $consumer = Join-Path $env:RUNNER_TEMP "consumer"
+          New-Item -ItemType Directory -Path $consumer -Force | Out-Null
+          $env:IYI_CACHE_DIR = Join-Path $env:RUNNER_TEMP "empty-iyi-cache"
+          $env:IYI_PROXY = "direct"
+          Remove-Item Env:IYI_MOD_MIRROR -ErrorAction SilentlyContinue
+          Push-Location $consumer
+          try {
+            & iyi init example.test/consumer
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & iyi get "github.com/iyilang/markd@$env:IYI_TEST_COMMIT" --as markd
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $reach = (& iyi mod reach | Out-String)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host $reach
+            $negative = $reach.Replace("std/random", "")
+            if (Test-Reach $negative) { throw "Reach negative control did not fail" }
+            Write-Host "Reach negative control rejected a missing std/random"
+            if (-not (Test-Reach $reach)) { throw "Unexpected package reach" }
+            [IO.File]::WriteAllText((Join-Path $consumer "consumer.iyi"), "import markd`nputs Markd.to_html(`"# Hello`")`n", [Text.UTF8Encoding]::new($false))
+            $exe = Join-Path $consumer $(if ($IsWindows) { "consumer.exe" } else { "consumer" })
+            & iyi build consumer.iyi -o $exe
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $result = (& $exe | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host $result
+            if ($result -ne "<h1>Hello</h1>") { throw "Unexpected consumer output: $result" }
+          } finally {
+            Pop-Location
+          }

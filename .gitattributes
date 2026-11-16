@@ -1,0 +1,4 @@
+* text=auto
+*.iyi text eol=lf
+spec/fixtures/*.txt -text
+markd/h_t_m_l_entities/entities.iyi -text !eol

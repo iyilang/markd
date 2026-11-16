@@ -20,6 +20,8 @@ Source: https://github.com/icyleaf/markd, tag v0.5.0, commit
 - Timing uses a monotonic clock rather than a wall clock.
 - Fenced code recognition uses explicit suffix checks because native regex
   does not support lookaround.
+- CRLF and lone CR are treated as line endings. Upstream 0.5.0 on Crystal
+  1.21.0 preserved a lone CR inside text instead of starting a new line.
 - The upstream `gfm` option was documented as unsupported and remains so.
 
 ## Import cycles

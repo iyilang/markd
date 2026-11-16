@@ -12,6 +12,16 @@ assert Markd.to_html("hello") == "<p>hello</p>\n"
 assert Markd.to_html("# hello") == "<h1>hello</h1>\n"
 assert Markd.to_html("*hello*") == "<p><em>hello</em></p>\n"
 assert Markd.to_html("**hello**") == "<p><strong>hello</strong></p>\n"
+assert Markd.to_html("alpha\r\nbeta") == "<p>alpha\nbeta</p>\n"
+assert Markd.to_html("alpha\rbeta") == "<p>alpha\nbeta</p>\n"
+assert Markd.to_html("# title\r\rparagraph\r") == "<h1>title</h1>\n<p>paragraph</p>\n"
+assert Markd.to_html("```\r\ncode\r\n```\r\n") == "<pre><code>code\n</code></pre>\n"
+assert Markd.to_html("```\rcode\r```\r") == "<pre><code>code\n</code></pre>\n"
+assert Markd.to_html("a\r\nb\rc\nd") == "<p>a\nb\nc\nd</p>\n"
+positioned = Options.new(source_pos: true)
+assert Markd.to_html("# a\r\rtext\r", positioned) == Markd.to_html("# a\n\ntext\n", positioned)
+assert Markd.to_html("[ΑΓΩ]: /url\n\n[αγω]") == "<p><a href=\"/url\">αγω</a></p>\n"
+assert Markd.to_html("[ТОЛПОЙ]: /url\n\n[Толпой]") == "<p><a href=\"/url\">Толпой</a></p>\n"
 assert Markd.to_html("[foo](bar)") == "<p><a href=\"bar\">foo</a></p>\n"
 assert Markd.to_html("![](bar)") == "<p><img src=\"bar\" alt=\"\" /></p>\n"
 options = Options.new
