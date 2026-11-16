@@ -35,7 +35,7 @@ APIs directly.
 
 ## Platform notes
 
-The package targets Linux, macOS, and Windows. Windows uses the x86-64 iyi
+CI uses iyi 0.21.0 on Linux, macOS, and Windows. Windows uses the x86-64
 release and requires the Visual C++ build tools with the Windows SDK, such as
 Visual Studio Build Tools with the "Desktop development with C++" workload.
 The compiler locates the toolchain through the Windows registry.
