@@ -109,7 +109,7 @@ jobs:
       - name: Resolve and run a cold-cache consumer
         run: |
           function Test-Reach([string] $text) {
-            $line = @($text -split "`n" | Where-Object { $_ -match '^github\.com/iyilang/markd ' })
+            $line = @($text -split "`n" | Where-Object { $_ -match '^github\.com/jwaldrip/markd ' })
             if ($line.Count -ne 1 -or $line[0] -match '[;:]\s*(C|links)\s') { return $false }
             foreach ($name in @("std/env", "std/random", "std/time")) {
               if (-not $line[0].Contains($name)) { return $false }
@@ -125,7 +125,7 @@ jobs:
           try {
             & iyi init example.test/consumer
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & iyi get "github.com/iyilang/markd@$env:IYI_TEST_COMMIT" --as markd
+            & iyi get "github.com/jwaldrip/markd@$env:IYI_TEST_COMMIT" --as markd
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $reach = (& iyi mod reach | Out-String)
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
