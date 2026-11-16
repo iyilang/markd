@@ -3,19 +3,37 @@
 Source: https://github.com/icyleaf/markd, tag v0.5.0, commit
 `d61dd52d40e659b53cb78712a7b1190cfdb9bc66`.
 
-## Differences and remaining work
+## Differences
 
 - iyi modules use qualified names. The options type is `Markd::Options::Options`;
   the node type is `Markd::Node::Node`; parser and renderer types are in
-  `Markd::BlockInlineParser` and `Markd::HtmlRendererRenderer`.
-- The Crystal `HTML` reopening is replaced by native entity decoding in
-  `markd/h_t_m_l_entities` and numeric handling in `std/html`. Its former
-  `HTML.encode_entities` entry point is not yet ported.
+  `Markd::BlockInlineParser`, `Markd::InlineParser`, `Markd::Renderer`, and
+  `Markd::HtmlRendererRenderer`.
+- The Crystal `HTML` reopening becomes functions in `markd/h_t_m_l_entities`
+  and `markd/h_t_m_l_entities/encoder`. The encoder uses the first upstream
+  name for each single-character entity and numeric references for other
+  non-ASCII characters; multi-character entities are encoded one character
+  at a time. The upstream encoder did not compile on Crystal 1.21.0 because
+  `Hash#key` was missing, and its regex union refused surrogate bytes.
+- Custom renderers implement the explicit abstract event methods on
+  `Markd::Renderer::Renderer`.
 - Timing uses a monotonic clock rather than a wall clock.
 - Fenced code recognition uses explicit suffix checks because native regex
   does not support lookaround.
 - The upstream `gfm` option was documented as unsupported and remains so.
-- The release and CI gates are still in progress.
+
+## Import cycles
+
+- The renderer and HTML renderer cycle is split by an abstract renderer
+  contract in `markd/renderer`. The HTML renderer imports that contract.
+- The block parser and inline parser cycle is split into separate modules
+  which both import `markd/patterns`.
+- The ten original rule files remain with the block parser in
+  `markd/block_inline_parser`. Block dispatch constructs the concrete rules,
+  and the rules call and mutate the concrete block parser. R-1 cannot import
+  those files separately while those two-way concrete references remain;
+  splitting them requires a shared parser-context interface and changes to
+  every rule's method signatures.
 
 ## Upstream examples
 
@@ -709,3 +727,4 @@ line is the opening example fence in the unmodified upstream fixture.
 | `spec/api_spec.cr:17` | `markd_test.iyi` |
 | `spec/api_spec.cr:18` | `markd_test.iyi` |
 | `spec/markd_spec.cr:14` | `markd_test.iyi` |
+| `src/markd/html_entities.cr:13` | `markd/encoder_test.iyi` |

@@ -3,6 +3,9 @@ module markd_test
 import markd
 import markd/options::{Options}
 import std/uri::{URI}
+import markd/node::{Node}
+import markd/inline_parser::{Inline}
+import std/io::{Memory}
 
 assert Markd.to_html("") == ""
 assert Markd.to_html("hello") == "<p>hello</p>\n"
@@ -24,3 +27,28 @@ assert Markd.to_html(raw) == "<pre><code class=\"language-&quot;&gt;&lt;script&g
 safe = Options.new(safe: true)
 assert Markd.to_html("<script>alert(1)</script>", safe) == "<!-- raw HTML omitted -->\n"
 assert Markd.to_html("[bad](javascript:alert%281%29)", safe) == "<p><a>bad</a></p>\n"
+
+root = Node.new(Node::Type::Document)
+first = Node.new(Node::Type::Text)
+second = Node.new(Node::Type::Text)
+root.append_child(first)
+root.append_child(second)
+assert root.last_child == second
+assert first.next == second
+assert second.prev == first
+walker = root.walker
+walker.resume_at(first, true)
+assert walker.next == {first, true}
+buffer = Memory.new
+Node.new(Node::Type::Text).to_s(buffer)
+assert buffer.to_s.includes?(" @type=")
+
+first_bracket = Inline::Bracket.new(first, nil, nil, 0, false)
+second_bracket = Inline::Bracket.new(second, nil, nil, 1, false)
+second_bracket.previous = first_bracket
+assert second_bracket.previous == first_bracket
+first_delimiter = Inline::Delimiter.new('*', 1, 1, first, nil, nil, true, false)
+second_delimiter = Inline::Delimiter.new('*', 1, 1, second, first_delimiter, nil, false, true)
+first_delimiter.next = second_delimiter
+assert first_delimiter.next == second_delimiter
+assert second_delimiter.previous == first_delimiter

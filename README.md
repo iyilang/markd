@@ -5,20 +5,33 @@ A port of [markd](https://github.com/icyleaf/markd) 0.5.0 (commit
 code and no Crystal standard library underneath.
 
 The upstream CommonMark, smart punctuation, and regression examples run
-against the port. Release verification is still in progress.
+against the port.
 
 iyi's module boundaries change the names of the options, parser, node, and
-renderer types. Entity decoding lives in a markd module rather than reopening
-`HTML`. The former `HTML.encode_entities` entry point has not been ported.
-See [PORTING.md](PORTING.md) for the example map and differences.
+renderer types. Entity decoding and encoding live in markd modules rather
+than reopening `HTML`. See [PORTING.md](PORTING.md) for the example map and
+differences.
 
 ## Usage
+
+After release, add the package with `iyi get github.com/iyilang/markd --as markd`.
 
 ```iyi
 import markd
 
 puts Markd.to_html("# Hello")
 ```
+
+To encode HTML entities, import `markd/h_t_m_l_entities/encoder` and call
+`Markd::HTMLEntities::Encoder.encode_entities`.
+
+## Reach
+
+`iyi mod reach` reports `std/env, std/random, std/time`. Optional timing
+uses `std/time`, which imports `std/env` for time-zone configuration. URI
+handling imports `std/idna`, whose `std/slice` and `std/indexable` imports
+reach `std/random`. The parser does not call the environment or randomness
+APIs directly.
 
 ## Development
 

@@ -1,0 +1,11 @@
+module markd/encoder_test
+
+import markd/h_t_m_l_entities/encoder::{encode_entities}
+import markd/h_t_m_l_entities::{decode_entities}
+
+assert encode_entities("A & B") == "A &amp; B"
+assert encode_entities("€") == "&euro;"
+assert encode_entities("😀") == "&#x1F600;"
+assert decode_entities(encode_entities("café & € 😀")) == "café & € 😀"
+assert Markd::HTMLEntities::Encoder.encode_entities("&") == "&amp;"
+assert encode_entities("") == ""
