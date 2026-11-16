@@ -170,7 +170,7 @@ pub class Node
     @next = nil
   end
 
-  def append_child(child : Node) : Nil
+  def append_child(child : Node) : Node
     child.unlink
     child.parent = self
 
@@ -182,10 +182,10 @@ pub class Node
       @first_child = child
       @last_child = child
     end
-    nil
+    child
   end
 
-  def insert_after(sibling : Node) : Nil
+  def insert_after(sibling : Node) : Node?
     sibling.unlink
 
     if nxt = next?
@@ -198,7 +198,6 @@ pub class Node
     sibling.prev = self
     @next = sibling
     sibling.parent = parent?
-    nil
   end
 
   def unlink : Nil
@@ -240,6 +239,7 @@ pub class Node
 
   class Walker
     @current : Node?
+
     def initialize(@root : Node)
       @current = @root
       @entering = true

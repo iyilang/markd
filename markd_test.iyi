@@ -1,0 +1,26 @@
+module markd_test
+
+import markd
+import markd/options::{Options}
+import std/uri::{URI}
+
+assert Markd.to_html("") == ""
+assert Markd.to_html("hello") == "<p>hello</p>\n"
+assert Markd.to_html("# hello") == "<h1>hello</h1>\n"
+assert Markd.to_html("*hello*") == "<p><em>hello</em></p>\n"
+assert Markd.to_html("**hello**") == "<p><strong>hello</strong></p>\n"
+assert Markd.to_html("[foo](bar)") == "<p><a href=\"bar\">foo</a></p>\n"
+assert Markd.to_html("![](bar)") == "<p><img src=\"bar\" alt=\"\" /></p>\n"
+options = Options.new
+options.base_url = URI.parse("http://example.com")
+assert Markd.to_html("[foo](bar)", options) == "<p><a href=\"http://example.com/bar\">foo</a></p>\n"
+assert Markd.to_html("![](bar)", options) == "<p><img src=\"http://example.com/bar\" alt=\"\" /></p>\n"
+assert Markd.to_html("[foo](https://example.com/baz)", options) == "<p><a href=\"https://example.com/baz\">foo</a></p>\n"
+assert Markd.to_html("![](https://example.com/baz)", options) == "<p><img src=\"https://example.com/baz\" alt=\"\" /></p>\n"
+
+raw = "```\"><script>window.location=\"https://footbar.com\"</script>\n```"
+assert Markd.to_html(raw) == "<pre><code class=\"language-&quot;&gt;&lt;script&gt;window.location=&quot;https://footbar.com&quot;&lt;/script&gt;\"></code></pre>\n"
+
+safe = Options.new(safe: true)
+assert Markd.to_html("<script>alert(1)</script>", safe) == "<!-- raw HTML omitted -->\n"
+assert Markd.to_html("[bad](javascript:alert%281%29)", safe) == "<p><a>bad</a></p>\n"

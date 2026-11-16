@@ -6,8 +6,8 @@ root = Node.new(Node::Type::Document)
 paragraph = Node.new(Node::Type::Paragraph)
 text = Node.new(Node::Type::Text)
 text.text = "hello"
-root.append_child(paragraph)
-paragraph.append_child(text)
+assert root.append_child(paragraph) == paragraph
+assert paragraph.append_child(text) == text
 
 assert root.first_child? == paragraph
 assert root.last_child? == paragraph
@@ -23,7 +23,7 @@ assert walker.next == {root, false}
 assert walker.next.nil?
 
 second = Node.new(Node::Type::Paragraph)
-paragraph.insert_after(second)
+assert paragraph.insert_after(second) == root
 assert root.last_child? == second
 assert paragraph.next? == second
 assert second.prev? == paragraph

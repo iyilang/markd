@@ -1,68 +1,59 @@
 module markd/html_renderer_renderer
 
-require "uri"
-require "html"
-require "json"
-import crystal_shards
+import std/io
+import std/text
+import std/uri::{URI}
 
 import markd/node::{Node}
 import markd/options::{Options}
-import markd/rule_and_others::{UNSAFE_DATA_PROTOCOL, UNSAFE_PROTOCOL}
+import markd/block_inline_parser::{UNSAFE_DATA_PROTOCOL, UNSAFE_PROTOCOL}
 import markd/utils
 
 # ── markd/renderer.cr ──
 
 pub abstract class Renderer
-  def initialize(@options = Options.new)
+  def initialize(@options : Options = Options.new)
     @output_io = String::Builder.new
     @last_output = "\n"
   end
 
-  def output(string : String)
+  def output(string : String) : String
     literal(escape(string))
   end
 
-  def literal(string : String)
+  def literal(string : String) : String
     @output_io << string
     @last_output = string
   end
 
   # render a Line Feed character
-  def newline
+  def newline : String?
     literal("\n") if @last_output != "\n"
   end
 
-  private ESCAPES = {
-    '&' => "&amp;",
-    '"' => "&quot;",
-    '<' => "&lt;",
-    '>' => "&gt;",
-  }
-
-  def escape(text)
-    # If we can determine that the text has no escape chars
-    # then we can return the text as is, avoiding an allocation
-    # and a lot of processing in `String#gsub`.
-    if has_escape_char?(text)
-      text.gsub(ESCAPES)
-    else
-      text
-    end
-  end
-
-  private def has_escape_char?(text)
+  def escape(text : String) : String
+    return text unless has_escape_char?(text)
+    out = String::Builder.new(text.bytesize)
     text.each_byte do |byte|
       case byte
-      when '&', '"', '<', '>'
-        return true
-      else
-        next
+      when 38_u8 then out << "&amp;"
+      when 34_u8 then out << "&quot;"
+      when 60_u8 then out << "&lt;"
+      when 62_u8 then out << "&gt;"
+      else            out.write_byte(byte)
       end
+    end
+    out.to_s
+  end
+
+  private def has_escape_char?(text : String) : Bool
+    text.each_byte do |byte|
+      return true if byte == 38_u8 || byte == 34_u8 || byte == 60_u8 || byte == 62_u8
     end
     false
   end
 
-  def render(document : Node)
+  def render(document : Node) : String
     Markd::Utils.timer("rendering", @options.time) do
       walker = document.walker
       while event = walker.next
@@ -119,7 +110,7 @@ pub class HTMLRenderer < Renderer
 
   HEADINGS = %w(h1 h2 h3 h4 h5 h6)
 
-  def heading(node : Node, entering : Bool)
+  def heading(node : Node, entering : Bool) : String?
     tag_name = HEADINGS[node.data["level"].as(Int32) - 1]
     if entering
       newline
@@ -131,17 +122,17 @@ pub class HTMLRenderer < Renderer
     end
   end
 
-  def code(node : Node, entering : Bool)
+  def code(node : Node, entering : Bool) : String?
     tag("code") do
       code_body(node)
     end
   end
 
-  def code_body(node : Node)
+  def code_body(node : Node) : String
     output(node.text)
   end
 
-  def code_block(node : Node, entering : Bool)
+  def code_block(node : Node, entering : Bool) : String?
     languages = node.fence_language ? node.fence_language.split : nil
     code_tag_attrs = attrs(node)
     pre_tag_attrs = if @options.prettyprint?
@@ -165,21 +156,25 @@ pub class HTMLRenderer < Renderer
     newline
   end
 
-  def code_block_language(languages)
-    languages.try(&.first?).try(&.strip.presence)
+  def code_block_language(languages : Array(String)?) : String?
+    return nil unless languages
+    first = languages.first?
+    return nil unless first
+    result = first.strip
+    result.empty? ? nil : result
   end
 
-  def code_block_body(node : Node, lang : String?)
+  def code_block_body(node : Node, lang : String?) : String
     output(node.text)
   end
 
-  def thematic_break(node : Node, entering : Bool)
+  def thematic_break(node : Node, entering : Bool) : String?
     newline
     tag("hr", attrs(node), self_closing: true)
     newline
   end
 
-  def block_quote(node : Node, entering : Bool)
+  def block_quote(node : Node, entering : Bool) : String?
     newline
     if entering
       tag("blockquote", attrs(node))
@@ -189,7 +184,7 @@ pub class HTMLRenderer < Renderer
     newline
   end
 
-  def list(node : Node, entering : Bool)
+  def list(node : Node, entering : Bool) : String?
     tag_name = node.data["type"] == "bullet" ? "ul" : "ol"
 
     newline
@@ -208,7 +203,7 @@ pub class HTMLRenderer < Renderer
     newline
   end
 
-  def item(node : Node, entering : Bool)
+  def item(node : Node, entering : Bool) : String?
     if entering
       tag("li", attrs(node))
     else
@@ -217,7 +212,7 @@ pub class HTMLRenderer < Renderer
     end
   end
 
-  def link(node : Node, entering : Bool)
+  def link(node : Node, entering : Bool) : String?
     if entering
       attrs = attrs(node)
       destination = node.data["destination"].as(String)
@@ -249,7 +244,7 @@ pub class HTMLRenderer < Renderer
     base_url.resolve(uri).to_s
   end
 
-  def image(node : Node, entering : Bool)
+  def image(node : Node, entering : Bool) : Int32 | String | Nil
     if entering
       if @disable_tag == 0
         destination = node.data["destination"].as(String)
@@ -272,20 +267,22 @@ pub class HTMLRenderer < Renderer
     end
   end
 
-  def html_block(node : Node, entering : Bool)
+  def html_block(node : Node, entering : Bool) : String?
     newline
     content = @options.safe? ? "<!-- raw HTML omitted -->" : node.text
     literal(content)
     newline
   end
 
-  def html_inline(node : Node, entering : Bool)
+  def html_inline(node : Node, entering : Bool) : String
     content = @options.safe? ? "<!-- raw HTML omitted -->" : node.text
     literal(content)
   end
 
-  def paragraph(node : Node, entering : Bool)
-    if (grand_parent = node.parent?.try &.parent?) && grand_parent.type.list?
+  def paragraph(node : Node, entering : Bool) : String?
+    parent = node.parent?
+    grand_parent = parent ? parent.parent? : nil
+    if grand_parent && grand_parent.type.list?
       return if grand_parent.data["tight"]
     end
 
@@ -298,24 +295,24 @@ pub class HTMLRenderer < Renderer
     end
   end
 
-  def emphasis(node : Node, entering : Bool)
+  def emphasis(node : Node, entering : Bool) : String?
     tag("em", end_tag: !entering)
   end
 
-  def soft_break(node : Node, entering : Bool)
+  def soft_break(node : Node, entering : Bool) : String
     literal("\n")
   end
 
-  def line_break(node : Node, entering : Bool)
+  def line_break(node : Node, entering : Bool) : String?
     tag("br", self_closing: true)
     newline
   end
 
-  def strong(node : Node, entering : Bool)
+  def strong(node : Node, entering : Bool) : String?
     tag("strong", end_tag: !entering)
   end
 
-  def text(node : Node, entering : Bool)
+  def text(node : Node, entering : Bool) : String
     output(node.text)
   end
 
@@ -325,8 +322,10 @@ pub class HTMLRenderer < Renderer
     @output_io << "<"
     @output_io << "/" if end_tag
     @output_io << name
-    attrs.try &.each do |key, value|
-      @output_io << ' ' << key << '=' << '"' << value << '"'
+    if attrs
+      attrs.each do |key, value|
+        @output_io << ' ' << key << '=' << '"' << value << '"'
+      end
     end
 
     @output_io << " /" if self_closing
@@ -334,7 +333,7 @@ pub class HTMLRenderer < Renderer
     @last_output = ">"
   end
 
-  private def tag(name : String, attrs = nil)
+  private def tag(name : String, attrs = nil, &)
     tag(name, attrs)
     yield
     tag(name, end_tag: true)
@@ -347,13 +346,8 @@ pub class HTMLRenderer < Renderer
   private def toc(node : Node)
     return unless node.type.heading?
 
-    {% if Crystal::VERSION < "1.2.0" %}
-      title = URI.encode(node.first_child.text)
-      @output_io << %(<a id="anchor-) << title << %(" class="anchor" href="#anchor-) << title << %("></a>)
-    {% else %}
-      title = URI.encode_path(node.first_child.text)
-      @output_io << %(<a id="anchor-) << title << %(" class="anchor" href="#anchor-) << title << %("></a>)
-    {% end %}
+    title = URI.encode_path(node.first_child.text)
+    @output_io << %(<a id="anchor-) << title << %(" class="anchor" href="#anchor-) << title << %("></a>)
     @last_output = ">"
   end
 
@@ -365,4 +359,3 @@ pub class HTMLRenderer < Renderer
     end
   end
 end
-

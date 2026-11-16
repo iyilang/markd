@@ -1,0 +1,14 @@
+module markd/parser_test
+
+import markd/block_inline_parser::{parse}
+import markd/node::{Node}
+
+root = parse("# hello\n\nworld\n")
+heading = root.first_child
+assert heading.type == Node::Type::Heading
+assert heading.data["level"] == 1
+assert heading.first_child.text == "hello"
+paragraph = heading.next
+assert paragraph.type == Node::Type::Paragraph
+assert paragraph.first_child.text == "world"
+assert paragraph.next?.nil?

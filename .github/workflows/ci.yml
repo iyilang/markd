@@ -36,7 +36,7 @@ jobs:
 
       - name: Test from artifacts
         run: |
-          for test in markd/*_test.iyi; do
+          for test in markd_test.iyi markd/*_test.iyi; do
             mods="$RUNNER_TEMP/mods/$(basename "$test" .iyi)"
             mkdir -p "$mods"
             iyi build --emit-iyimod "$mods" "$test" -o "$RUNNER_TEMP/emitted"
@@ -45,7 +45,7 @@ jobs:
           done
 
       - name: Check formatting
-        run: iyi fmt --check markd.iyi markd
+        run: iyi fmt --check markd.iyi markd_test.iyi markd
 
       - name: Vet
-        run: iyi vet markd.iyi
+        run: iyi vet markd_test.iyi

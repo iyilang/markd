@@ -57,7 +57,7 @@ pub class Options
     @source_pos : Bool = false,
     @safe : Bool = false,
     @prettyprint : Bool = false,
-    @base_url : URI? = nil
+    @base_url : URI? = nil,
   )
   end
 end

@@ -2,5 +2,6 @@
 
 ## Unreleased
 
-- Start the port of icyleaf/markd 0.5.0. The parser and renderer still need
-  their native iyi implementations.
+- Port the markd 0.5.0 parser and HTML renderer to native iyi.
+- Exercise all upstream CommonMark, smart punctuation, and regression examples.
+- Keep the entity encoder and release checks outstanding.
